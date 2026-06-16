@@ -13,9 +13,10 @@ func resetForTest(t *testing.T) {
 	defer _mux.Unlock()
 	_stoppers = make(map[*key]context.CancelCauseFunc)
 	_handlers = make(map[*key]HandlerFunc)
-	_gracePeriod = 0
+	_gracePeriod = defaultGracePeriod
 	_initer = sync.Once{}
 	_shutdowner = sync.Once{}
+	_shutdownStarted = make(chan struct{})
 	_shutdownDeadline = time.Time{}
 	_lateShutdownWG = sync.WaitGroup{}
 	_noExit = true

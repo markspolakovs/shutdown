@@ -16,13 +16,16 @@ type key struct{}
 var (
 	_stoppers = make(map[*key]context.CancelCauseFunc)
 	_handlers = make(map[*key]HandlerFunc)
+	_shutdownStarted = make(chan struct{})
 	_shutdownDeadline time.Time
 	_lateShutdownWG sync.WaitGroup
 	_mux sync.Mutex
 )
 
+const defaultGracePeriod = 30 * time.Second
+
 var (
-	_gracePeriod = 30 * time.Second // default; overridden by Init
+	_gracePeriod = defaultGracePeriod // default; overridden by Init
 	_noExit bool
 )
 
@@ -145,6 +148,23 @@ func Handle(handler HandlerFunc) func() {
 	}
 }
 
+// Wait blocks until a shutdown has been initiated and all shutdown handlers
+// have completed. It is intended for use in main() as an alternative to
+// relying on os.Exit, in conjunction with NoExit:
+//
+//	shutdown.Init(shutdown.Options{NoExit: true})
+//	// ... register handlers ...
+//	shutdown.Wait()
+//
+// If Shutdown has not yet been called, Wait blocks until it is called and
+// all handlers have finished. If Shutdown has already completed, Wait
+// returns immediately. Wait is typically used with NoExit: true.
+// Without it, Wait will never return as os.Exit will be called first.
+func Wait() {
+    <-_shutdownStarted
+    _lateShutdownWG.Wait()
+}
+
 // Shutdown starts a shutdown of the application.
 //
 // Shutdown first cancels all contexts returned by Ctx, then invokes
@@ -171,7 +191,8 @@ func Shutdown() {
 		for _, h := range _handlers {
 		    handlers = append(handlers, h)
 		}
-		_lateShutdownWG.Add(1) // sentinel: prevents Wait() returning before all late handlers are launched
+		_lateShutdownWG.Add(1) // sentinel: prevents _lateShutdownWG.Wait() returning before all late handlers are launched
+		close(_shutdownStarted) // only after the above to ensure that _lateShutdownWG is >=1 whenever any Wait() reaches _lateShutdownWG.Wait()
 		_mux.Unlock()
 
 		for _, cancel := range stoppers {
