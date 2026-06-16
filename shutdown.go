@@ -149,12 +149,9 @@ func Handle(handler HandlerFunc) func() {
 }
 
 // Wait blocks until a shutdown has been initiated and all shutdown handlers
-// have completed. It is intended for use in main() as an alternative to
-// relying on os.Exit, in conjunction with NoExit:
-//
-//	shutdown.Init(shutdown.Options{NoExit: true})
-//	// ... register handlers ...
-//	shutdown.Wait()
+// have completed. It is intended for use in main() to ensure that the main
+// goroutine (and thus the entire program) does not exist until shutdown
+// is complete.
 //
 // If Shutdown has not yet been called, Wait blocks until it is called and
 // all handlers have finished. If Shutdown has already completed, Wait
