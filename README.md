@@ -56,7 +56,7 @@ When shutdown starts, the package:
 2. Runs every function registered with `shutdown.Handle` concurrently.
 3. Gives handlers a deadline derived from the configured grace period.
 4. Waits for all handlers to return.
-5. Exits the process with status code `0`.
+5. Exits the process with status code `0` (unless `Options.NoExit` was `true` when calling `shutdown.Init`).
 
 The handler deadline is 80% of the configured grace period, leaving a small buffer before an external supervisor such as Kubernetes may forcefully terminate the process.
 
@@ -68,6 +68,7 @@ The handler deadline is 80% of the configured grace period, leaving a small buff
 shutdown.Init(shutdown.Options{
 	GracePeriod:      30 * time.Second,
 	NoSignalHandling: false,
+	NoExit:           true,
 })
 ```
 
@@ -77,6 +78,7 @@ Options:
 
 - `GracePeriod`: total time allotted for shutdown work. Defaults to `30s`.
 - `NoSignalHandling`: disables the built-in `SIGTERM`/`SIGINT` handler. Use this if your application wants to call `shutdown.Shutdown()` itself.
+- `NoExit`: disables the built-in `os.Exit(0)` behaviour once all handlers are complete.
 
 ### `Ctx`
 

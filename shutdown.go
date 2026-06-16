@@ -123,7 +123,8 @@ func Handle(handler HandlerFunc) func() {
 // handler has finished, shutdown exits the application unless Init
 // was called with NoExit set to true.
 //
-// Shutdown only runs once. Concurrent or later calls have no additional effect.
+// Shutdown only runs once. Concurrent or later calls have no effect and will
+// block until the first Shutdown call returns.
 func Shutdown() {
 	_shutdowner.Do(func() {
 		_shutdownWG.Add(1) // sentinel: keep counter > 0 until handlers are all launched
