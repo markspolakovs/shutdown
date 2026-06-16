@@ -49,6 +49,7 @@ type Options struct {
 }
 
 // Init sets up the shutdown handling. It should be called once at the start of the program.
+// Repeated calls have no effect.
 func Init(opts Options) {
 	_initer.Do(func() {
 		if opts.GracePeriod > 0 {
@@ -74,6 +75,8 @@ func Init(opts Options) {
 
 // Ctx returns a context based on the given ctx that will be cancelled
 // when a shutdown is requested.
+//
+// Ctx is safe for concurrent use.
 func Ctx(ctx context.Context) context.Context {
 	child, cancel := context.WithCancelCause(ctx)
 	key := new(byte)
@@ -97,9 +100,11 @@ type HandlerFunc func(context.Context)
 // Handle registers a shutdown handler function.
 // The function will be called when a shutdown is requested,
 // with a context with a deadline of no more than the grace period.
-// Note that if Handle is called concurrently with Shutdown
-// (or receiving a shutdown signal), there's no guarantee that
-// handler will be called.
+//
+// Handle is safe for concurrent use. However, note that
+// if Handle is called concurrently with Shutdown
+// (or receiving a shutdown signal), it is possible that the
+// handler will not be called.
 func Handle(handler HandlerFunc) func() {
 	if deadline := _shutdownDeadlineUnixMicros.Load(); deadline > 0 {
 		// a shutdown is in progress, call it immediately
