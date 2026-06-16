@@ -76,7 +76,7 @@ func Init(opts Options) {
 // Ctx returns a context based on the given ctx that will be cancelled
 // when a shutdown is requested.
 //
-// Ctx is safe for concurrent use.
+// Ctx is safe for concurrent use. Each call to Ctx returns a new context.
 func Ctx(ctx context.Context) context.Context {
 	child, cancel := context.WithCancelCause(ctx)
 	key := new(byte)

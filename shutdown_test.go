@@ -9,8 +9,14 @@ import (
 
 func resetForTest(t *testing.T) {
 	t.Helper()
-	_stoppers = sync.Map{}
-	_handlers = sync.Map{}
+	_stoppers.Range(func(key, _ any) bool {
+		_stoppers.Delete(key)
+		return true
+	})
+	_handlers.Range(func(key, _ any) bool {
+		_handlers.Delete(key)
+		return true
+	})
 	_gracePeriod = 0
 	_initer = sync.Once{}
 	_shutdowner = sync.Once{}
@@ -46,7 +52,7 @@ func TestCtxIsCancelledOnShutdown(t *testing.T) {
 	resetForTest(t)
 	Init(Options{GracePeriod: time.Second, NoSignalHandling: true})
 
-	ctx := Ctx(context.Background())
+	ctx := Ctx(t.Context())
 	select {
 	case <-ctx.Done():
 		t.Fatal("context was cancelled before shutdown")
