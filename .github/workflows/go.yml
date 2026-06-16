@@ -19,7 +19,7 @@ jobs:
     - name: Set up Go
       uses: WillAbides/setup-go-faster@fea1b51f8e1f07229131e4438f235ad219880d31
       with:
-        go-version: 'oldstable'
+        go-version: 'stable'
 
     - name: Build
       run: go build -v ./...
