@@ -7,26 +7,28 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
 
+type key struct{}
+
 var (
-	_stoppers sync.Map
-	_handlers sync.Map
+	_stoppers = make(map[*key]context.CancelCauseFunc)
+	_handlers = make(map[*key]HandlerFunc)
+	_shutdownDeadline time.Time
+	_lateShutdownWG sync.WaitGroup
+	_mux sync.Mutex
 )
 
 var (
-	_gracePeriod time.Duration
+	_gracePeriod = 30 * time.Second // default; overridden by Init
 	_noExit bool
 )
 
 var (
 	_initer sync.Once
 	_shutdowner sync.Once
-	_shutdownDeadlineUnixMicros atomic.Int64
-	_shutdownWG sync.WaitGroup
 )
 
 var (
@@ -54,12 +56,8 @@ func Init(opts Options) {
 	_initer.Do(func() {
 		if opts.GracePeriod > 0 {
 			_gracePeriod = opts.GracePeriod.Abs()
-		} else {
-			_gracePeriod = 30 * time.Second
 		}
-		if opts.NoExit {
-			_noExit = opts.NoExit
-		}
+		_noExit = opts.NoExit
 
 		if !opts.NoSignalHandling {
 			ch := make(chan os.Signal, 1)
@@ -74,20 +72,30 @@ func Init(opts Options) {
 }
 
 // Ctx returns a context based on the given ctx that will be cancelled
-// when a shutdown is requested.
+// when a shutdown is requested. If shutdown has already begun, the returned
+// context is immediately cancelled with ErrShuttingDown.
 //
 // Ctx is safe for concurrent use. Each call to Ctx returns a new context.
 func Ctx(ctx context.Context) context.Context {
+
 	child, cancel := context.WithCancelCause(ctx)
-	key := new(byte)
-	_stoppers.Store(key, cancel)
-	go func(){
-		<-child.Done()
-		_stoppers.Delete(key)
-	}()
-	if _shutdownDeadlineUnixMicros.Load() > 0 {
+	key := new(key)
+
+	_mux.Lock()
+	_stoppers[key] = cancel
+	shuttingDown := !_shutdownDeadline.IsZero()
+	_mux.Unlock()
+
+	context.AfterFunc(child, func() {
+		_mux.Lock()
+		defer _mux.Unlock()
+		delete(_stoppers, key)
+	})
+
+	if shuttingDown {
 		cancel(ErrShuttingDown)
 	}
+
 	return child
 }
 
@@ -98,61 +106,90 @@ func Ctx(ctx context.Context) context.Context {
 type HandlerFunc func(context.Context)
 
 // Handle registers a shutdown handler function.
-// The function will be called when a shutdown is requested,
-// with a context with a deadline of no more than the grace period.
 //
-// Handle is safe for concurrent use. However, note that
-// if Handle is called concurrently with Shutdown
-// (or receiving a shutdown signal), it is possible that the
-// handler will not be called.
+// The handler will be called in a separate goroutine when a shutdown is
+// requested, with a context whose deadline is no later than the configured
+// grace period.
+//
+// If shutdown has already begun, the handler will be called immediately in a
+// separate goroutine with the shutdown deadline context.
+//
+// Each handler is invoked at most once. Handlers that are still registered
+// when shutdown begins are guaranteed to be invoked.
+//
+// Handle is safe for concurrent use, including concurrently with Shutdown.
+//
+// Handle returns a deregister function used to exclude this handler from future
+// shutdowns. Calling it once a shutdown has begun has no effect.
 func Handle(handler HandlerFunc) func() {
-	if deadline := _shutdownDeadlineUnixMicros.Load(); deadline > 0 {
+	_mux.Lock()
+	deadline := _shutdownDeadline
+	if !deadline.IsZero() {
 		// a shutdown is in progress, call it immediately
-		_shutdownWG.Go(func() {
-			ctx, done := context.WithDeadlineCause(context.Background(), time.UnixMicro(deadline), ErrShutdownDeadline)
+		_mux.Unlock()
+		_lateShutdownWG.Go(func() {
+			ctx, done := context.WithDeadlineCause(context.Background(), deadline, ErrShutdownDeadline)
 			defer done()
 			handler(ctx)
 		})
 		return func(){}
 	}
 
-	key := new(byte)
-	_handlers.Store(key, handler)
+	key := new(key)
+	_handlers[key] = handler
+	_mux.Unlock()
 	return func() {
-		_handlers.Delete(key)
+		_mux.Lock()
+		defer _mux.Unlock()
+		delete(_handlers, key)
 	}
 }
 
-// Shutdown starts a shutdown of the application, cancelling all contexts
-// returned by Ctx and invoking all handlers given to Handle. Once every
-// handler has finished, shutdown exits the application unless Init
-// was called with NoExit set to true.
+// Shutdown starts a shutdown of the application.
+//
+// Shutdown first cancels all contexts returned by Ctx, then invokes
+// all registered shutdown handlers. Once every handler has finished,
+// shutdown exits the application unless Init was called with NoExit set to true.
 //
 // Shutdown only runs once. Concurrent or later calls have no effect and will
 // block until the first Shutdown call returns.
 func Shutdown() {
 	_shutdowner.Do(func() {
-		_shutdownWG.Add(1) // sentinel: keep counter > 0 until handlers are all launched
+		_mux.Lock()
+		// Use 80% of the grace period so the process has a buffer to clean up
+		// after handlers finish before the external deadline (e.g. Kubernetes SIGKILL) arrives.
 		timeout := time.Duration(float64(_gracePeriod) * 0.8)
-		if timeout == 0 {
-			timeout = 25 * time.Second
-		}
 		deadline := time.Now().Add(timeout)
-		_shutdownDeadlineUnixMicros.Store(deadline.UnixMicro())
+		_shutdownDeadline = deadline
+
+		// Clone the maps to avoid holding _mux while calling handlers
+		stoppers := make([]context.CancelCauseFunc, 0, len(_stoppers))
+		for _, stop := range _stoppers {
+		    stoppers = append(stoppers, stop)
+		}
+		handlers := make([]HandlerFunc, 0, len(_handlers))
+		for _, h := range _handlers {
+		    handlers = append(handlers, h)
+		}
+		_lateShutdownWG.Add(1) // sentinel: prevents Wait() returning before all late handlers are launched
+		_mux.Unlock()
+
+		for _, cancel := range stoppers {
+			cancel(ErrShuttingDown)
+		}
+
 		ctx, done := context.WithDeadlineCause(context.Background(), deadline, ErrShutdownDeadline)
 		defer done() // NB: no-op outside of tests because of the os.Exit()
-		_stoppers.Range(func(_, fn any) bool {
-			fn.(context.CancelCauseFunc)(ErrShuttingDown)
-			return true
-		})
-		_handlers.Range(func(_, handler any) bool {
-			_shutdownWG.Go(func() {
-				handler.(HandlerFunc)(ctx)
+
+		var wg sync.WaitGroup
+		for _, fn := range handlers {
+			wg.Go(func() {
+				fn(ctx)
 			})
-			return true
-		})
-		_shutdownWG.Done()
-		_shutdownWG.Wait()
+		}
+		wg.Wait()
+		_lateShutdownWG.Done()
+		_lateShutdownWG.Wait()
 		if !_noExit {
 			os.Exit(0)
 		}

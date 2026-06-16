@@ -9,31 +9,27 @@ import (
 
 func resetForTest(t *testing.T) {
 	t.Helper()
-	_stoppers.Range(func(key, _ any) bool {
-		_stoppers.Delete(key)
-		return true
-	})
-	_handlers.Range(func(key, _ any) bool {
-		_handlers.Delete(key)
-		return true
-	})
+	_mux.Lock()
+	defer _mux.Unlock()
+	_stoppers = make(map[*key]context.CancelCauseFunc)
+	_handlers = make(map[*key]HandlerFunc)
 	_gracePeriod = 0
 	_initer = sync.Once{}
 	_shutdowner = sync.Once{}
-	_shutdownDeadlineUnixMicros.Store(0)
-	_shutdownWG = sync.WaitGroup{}
+	_shutdownDeadline = time.Time{}
+	_lateShutdownWG = sync.WaitGroup{}
 	_noExit = true
 }
 
 func TestInitSetsGracePeriodOnce(t *testing.T) {
 	resetForTest(t)
 
-	Init(Options{GracePeriod: 150 * time.Millisecond, NoSignalHandling: true})
+	Init(Options{GracePeriod: 150 * time.Millisecond, NoSignalHandling: true, NoExit: true})
 	if _gracePeriod != 150*time.Millisecond {
 		t.Fatalf("grace period = %v, want 150ms", _gracePeriod)
 	}
 
-	Init(Options{GracePeriod: time.Second, NoSignalHandling: true})
+	Init(Options{GracePeriod: time.Second, NoSignalHandling: true, NoExit: true})
 	if _gracePeriod != 150*time.Millisecond {
 		t.Fatalf("second Init changed grace period to %v", _gracePeriod)
 	}
@@ -42,7 +38,7 @@ func TestInitSetsGracePeriodOnce(t *testing.T) {
 func TestInitUsesDefaultGracePeriod(t *testing.T) {
 	resetForTest(t)
 
-	Init(Options{NoSignalHandling: true})
+	Init(Options{NoSignalHandling: true, NoExit: true})
 	if _gracePeriod != 30*time.Second {
 		t.Fatalf("grace period = %v, want 30s", _gracePeriod)
 	}
@@ -50,7 +46,7 @@ func TestInitUsesDefaultGracePeriod(t *testing.T) {
 
 func TestCtxIsCancelledOnShutdown(t *testing.T) {
 	resetForTest(t)
-	Init(Options{GracePeriod: time.Second, NoSignalHandling: true})
+	Init(Options{GracePeriod: time.Second, NoSignalHandling: true, NoExit: true})
 
 	ctx := Ctx(t.Context())
 	select {
@@ -74,7 +70,7 @@ func TestCtxIsCancelledOnShutdown(t *testing.T) {
 
 func TestHandleInvokesRegisteredHandlers(t *testing.T) {
 	resetForTest(t)
-	Init(Options{GracePeriod: time.Second, NoSignalHandling: true})
+	Init(Options{GracePeriod: time.Second, NoSignalHandling: true, NoExit: true})
 
 	called := make(chan struct{})
 	Handle(func(ctx context.Context) {
@@ -95,7 +91,7 @@ func TestHandleInvokesRegisteredHandlers(t *testing.T) {
 
 func TestHandleUnregistersHandlers(t *testing.T) {
 	resetForTest(t)
-	Init(Options{GracePeriod: time.Second, NoSignalHandling: true})
+	Init(Options{GracePeriod: time.Second, NoSignalHandling: true, NoExit: true})
 
 	called := false
 	unregister := Handle(func(context.Context) {
@@ -112,7 +108,7 @@ func TestHandleUnregistersHandlers(t *testing.T) {
 
 func TestShutdownWaitsForHandlers(t *testing.T) {
 	resetForTest(t)
-	Init(Options{GracePeriod: time.Second, NoSignalHandling: true})
+	Init(Options{GracePeriod: time.Second, NoSignalHandling: true, NoExit: true})
 
 	started := make(chan struct{})
 	release := make(chan struct{})
