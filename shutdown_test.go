@@ -16,7 +16,7 @@ func resetForTest(t *testing.T) {
 	_shutdowner = sync.Once{}
 	_shutdownDeadlineUnixMicros.Store(0)
 	_shutdownWG = sync.WaitGroup{}
-	_exit = func() {}
+	_noExit = true
 }
 
 func TestInitSetsGracePeriodOnce(t *testing.T) {

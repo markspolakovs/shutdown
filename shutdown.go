@@ -19,6 +19,7 @@ var (
 
 var (
 	_gracePeriod time.Duration
+	_noExit bool
 )
 
 var (
@@ -43,6 +44,8 @@ type Options struct {
 	// If set, the global SIGTERM/SIGINT handler will not be configured and the
 	// application will be responsible for calling Shutdown itself.
 	NoSignalHandling bool
+	// If set, a shutdown will not cause the application to exit.
+	NoExit bool
 }
 
 // Init sets up the shutdown handling. It should be called once at the start of the program.
@@ -52,6 +55,9 @@ func Init(opts Options) {
 			_gracePeriod = opts.GracePeriod.Abs()
 		} else {
 			_gracePeriod = 30 * time.Second
+		}
+		if opts.NoExit {
+			_noExit = opts.NoExit
 		}
 
 		if !opts.NoSignalHandling {
@@ -112,13 +118,12 @@ func Handle(handler HandlerFunc) func() {
 	}
 }
 
-var _exit func() = func() {
-	os.Exit(0)
-}
-
 // Shutdown starts a shutdown of the application, cancelling all contexts
-// returned by Ctx and invoking all handlers given to Handle. It returns
-// once every handler has returned.
+// returned by Ctx and invoking all handlers given to Handle. Once every
+// handler has finished, shutdown exits the application unless Init
+// was called with NoExit set to true.
+//
+// Shutdown only runs once. Concurrent or later calls have no additional effect.
 func Shutdown() {
 	_shutdowner.Do(func() {
 		_shutdownWG.Add(1) // sentinel: keep counter > 0 until handlers are all launched
@@ -142,6 +147,8 @@ func Shutdown() {
 		})
 		_shutdownWG.Done()
 		_shutdownWG.Wait()
-		_exit()
+		if !_noExit {
+			os.Exit(0)
+		}
 	})
 }
