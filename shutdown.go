@@ -155,8 +155,9 @@ func Handle(handler HandlerFunc) func() {
 //
 // If Shutdown has not yet been called, Wait blocks until it is called and
 // all handlers have finished. If Shutdown has already completed, Wait
-// returns immediately. Wait is typically used with NoExit: true.
-// Without it, Wait will never return as os.Exit will be called first.
+// returns immediately (though this is likely only useful in combination
+// with Options.NoExit, otherwise os.Exit will have been called before
+// Wait would have returned).
 func Wait() {
     <-_shutdownStarted
     _lateShutdownWG.Wait()
