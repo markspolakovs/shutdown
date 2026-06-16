@@ -43,6 +43,8 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		panic(err)
 	}
+
+	shutdown.Wait() // block until we receive a SIGINT and shutdown is complete
 }
 ```
 
@@ -110,6 +112,14 @@ shutdown.Shutdown()
 `Shutdown` starts the shutdown sequence manually. It is useful when `NoSignalHandling` is enabled or when another part of your application decides the process should stop.
 
 `Shutdown` only runs once. Concurrent or later calls have no additional effect.
+
+### `Wait`
+
+```go
+shutdown.Wait()
+```
+
+`Wait` blocks until a shutdown occurs and all handlers complete. It is useful at the end of `func main()` to ensure that the main goroutine, and thus the entire process, does not exit until a graceful shutdown has completed.
 
 ## Notes
 
