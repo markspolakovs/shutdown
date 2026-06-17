@@ -11,8 +11,8 @@ func resetForTest(t *testing.T) {
 	t.Helper()
 	_mux.Lock()
 	defer _mux.Unlock()
-	_stoppers = make(map[*key]context.CancelCauseFunc)
-	_handlers = make(map[*key]HandlerFunc)
+	_stoppers = make(map[*byte]context.CancelCauseFunc)
+	_handlers = make(map[*byte]HandlerFunc)
 	_gracePeriod = defaultGracePeriod
 	_initer = sync.Once{}
 	_shutdowner = sync.Once{}
