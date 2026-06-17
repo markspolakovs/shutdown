@@ -11,11 +11,9 @@ import (
 	"time"
 )
 
-type key struct{}
-
 var (
-	_stoppers = make(map[*key]context.CancelCauseFunc)
-	_handlers = make(map[*key]HandlerFunc)
+	_stoppers = make(map[*byte]context.CancelCauseFunc)
+	_handlers = make(map[*byte]HandlerFunc)
 	_shutdownStarted = make(chan struct{})
 	_shutdownDeadline time.Time
 	_lateShutdownWG sync.WaitGroup
@@ -82,7 +80,7 @@ func Init(opts Options) {
 func Ctx(ctx context.Context) context.Context {
 
 	child, cancel := context.WithCancelCause(ctx)
-	key := new(key)
+	key := new(byte)
 
 	_mux.Lock()
 	_stoppers[key] = cancel
@@ -138,7 +136,7 @@ func Handle(handler HandlerFunc) func() {
 		return func(){}
 	}
 
-	key := new(key)
+	key := new(byte)
 	_handlers[key] = handler
 	_mux.Unlock()
 	return func() {
